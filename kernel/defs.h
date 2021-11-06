@@ -178,7 +178,12 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+pte_t*          walk(pagetable_t, uint64, int);
 void            vmprint(pagetable_t);   //打印页表
+void            proc_kvmmap(pagetable_t, uint64, uint64, uint64, int);//为用户进程内核页表添加映射
+pagetable_t     proc_kvminit(void);     //为用户进程分配独立内核页表
+void            proc_freekpagetable(pagetable_t); //释放进程内核页表
+void            kvmmapuser(pagetable_t, pagetable_t, uint64, uint64);   //复制进程页表项至进程内核页表
 
 // plic.c
 void            plicinit(void);
@@ -224,3 +229,7 @@ int             sockread(struct sock *, uint64, int);
 int             sockwrite(struct sock *, uint64, int);
 void            sockrecvudp(struct mbuf*, uint32, uint16, uint16);
 #endif
+
+// vmcopin.c
+int             copyin_new(pagetable_t, char*, uint64, uint64 len);
+int             copyinstr_new(pagetable_t, char*, uint64, uint64);

@@ -34,14 +34,14 @@ procinit(void)
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
+      /* char *pa = kalloc(); */
+      /* if(pa == 0) */
+      /*   panic("kalloc"); */
+      /* uint64 va = KSTACK((int) (p - proc)); */
+      /* kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W); */
+      /* p->kstack = va; */
   }
-  kvminithart();
+  /* kvminithart(); */
 }
 
 // Must be called with interrupts disabled,
@@ -115,11 +115,19 @@ found:
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
-  if(p->pagetable == 0){
+  // 分配进程的内核页表和内核栈并完成映射
+  p->kpagetable = proc_kvminit();
+  if(p->pagetable == 0 || p->kpagetable == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
   }
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK((int) (p - proc));
+  proc_kvmmap(p->kpagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -141,6 +149,16 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->kstack){
+    pte_t *pstack = walk(p->kpagetable, p->kstack, 0);
+    uint64 pa = (uint64)PTE2PA(*pstack);
+    kfree((void*)pa);
+  }
+  if(p->kpagetable)
+    proc_freekpagetable(p->kpagetable);
+
+  p->kpagetable = 0;
+  p->kstack = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -230,6 +248,9 @@ userinit(void)
 
   p->state = RUNNABLE;
 
+  //(+)
+  kvmmapuser(p->kpagetable, p->pagetable, p->sz, 0);
+
   release(&p->lock);
 }
 
@@ -243,11 +264,19 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
-      return -1;
-    }
+    //(+)
+    sz = uvmalloc(p->pagetable, sz, sz + n);
+    if (sz == 0)
+        return -1;
+    kvmmapuser(p->kpagetable, p->pagetable, sz, p->sz);
+    //(+)
+    /* if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) { */
+    /*   return -1; */
+    /* } */
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    //(+)
+    uvmunmap(p->kpagetable,PGROUNDUP(sz),(PGROUNDUP(p->sz) - PGROUNDUP(sz)) / PGSIZE,0);
   }
   p->sz = sz;
   return 0;
@@ -283,6 +312,7 @@ fork(void)
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
+
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
     if(p->ofile[i])
@@ -294,6 +324,9 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  //将新进程的用户页表复制到内核页表
+  kvmmapuser(np->kpagetable, np->pagetable, np->sz, 0);
 
   release(&np->lock);
 
@@ -473,12 +506,15 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
+
         swtch(&c->context, &p->context);
 
+        kvminithart();
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
-
         found = 1;
       }
       release(&p->lock);
