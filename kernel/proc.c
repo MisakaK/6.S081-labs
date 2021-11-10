@@ -113,6 +113,10 @@ found:
     return 0;
   }
 
+  p->flag = 0;
+  p->alarm_interval = 0;
+  p->ticks_count = 0;
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
